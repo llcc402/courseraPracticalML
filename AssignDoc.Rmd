@@ -1,0 +1,129 @@
+---
+title: "Classification task for the pml data set"
+author: "llcc"
+date: 2015-03-16
+output: html_document
+---
+
+## Introduction
+
+Using devices such as *Jawbone Up*, *Nike FuelBand*, and *Fitbit* it is now possible to collect a large amount of data about personal activity relatively inexpensively. A group of people have took these devices with them and colllected a large amount of data for us to train a model to predict the particular activity they did. The training data is available here: <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>, and it is used to train the model. The test data is available here <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv> and it is used to test the model trained by the training data.
+ 
+When the training and test data are contained in the working directory, the training and testing procesure can be performed in the following.
+
+## Preprocessing
+
+Load the data into R.
+```{r, load, cache=TRUE}
+training <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+dim(training)
+```
+
+Delete the first variable which is used to indicate the observation.
+```{r}
+training <- training[, 2:160]
+```
+
+Note there are some vaiables containing a lot of `NA`s, and it is benifit to delete them first. For example, the variable `training$min_roll_belt` contains `r sum(is.na(training$min_roll_belt))` of `NA`s from total `r dim(training)[1]` observations.
+```{r, example}
+summary(training$min_roll_belt)
+```
+
+We build the following function to detect the proportion of `NA`s in every variable.
+```{r, prop_na_fun}
+naProp <- function(x){
+        sum(is.na(x)) / length(x)
+}
+```
+
+Compute the proportions of `NA`s in all the variables and store them to a variable `na_prop`.
+```{r, prop_na}
+na_prop <- sapply(training, naProp)
+```
+
+Now we can delete the variables with the proportion of `NA`s more than 90% and store the names of the rest in a variable `useful_var_names`.
+```{r, useful_var_names}
+useful_var_names <- names(na_prop[na_prop < .9])
+```
+
+After that we test whether there are still `NA`s in the rest variables.
+```{r, test_na}
+sum(sapply(training[, useful_var_names], naProp))
+```
+
+The result seems perfect and we don't need to bother tackling the missing values. It is safe to truncate the variables with too many `NA`s.
+```{r, truncate_na}
+training <- training[, useful_var_names]
+```
+
+To reduce the number of variables further, we want to check whether there are variables with little variance.
+```{r, check_zero_var}
+library(caret)
+nzv <- nearZeroVar(training)
+nzv
+```
+
+Truncate these variables and we get the final training data set.
+```{r, truncate_zero_var}
+training <- training[, -nzv]
+```
+
+Update the variable `useful_var_names`.
+```{r, update_useful_var_names}
+useful_var_names <- names(training)
+```
+
+## Model building
+
+To build the model we need to know the classes of the variables.
+```{r, var_class}
+var_classes <- sapply(training, class)
+unique(var_classes)
+```
+
+The factors are surely discontinous variables but the integers remain unkown. 
+```{r, summary_int}
+uniq_len <- function(x){
+        length(unique(x))
+}
+sapply(training[, var_classes == "integer"], uniq_len)
+```
+ 
+The above result shows that the unique numbers of the values taken by some variables are so small that we should take them as categorical variables. The best model to leverage continuous variable with discontinuous variable is the random forest, so we use it to build the model.
+
+We use 60% of the observations to train the model and leave the rest for cross validation. 
+```{r, createPar, cache=TRUE}
+inTrain <- createDataPartition(training$classe, p = .6, list = FALSE)
+modelTraining <- training[inTrain, ]
+cv <- training[-inTrain, ]
+```
+
+Train a random forest on part of the training set.
+```{r, rf_train, cache=TRUE}
+library(randomForest)
+fit <- train(classe ~ ., data = modelTraining, method = "rf")
+```
+
+Test the model on the rest of the training set.
+```{r, cache=TRUE}
+cv_predict <- predict(fit, cv[, useful_var_names])
+confusionMatrix(cv_predict, cv$classe)
+```
+
+The result seems pretty good.
+
+## Predicting
+
+To use the model to predict the classe of the test set we need to truncate the unused variables.
+```{r, cache=TRUE}
+test_names <- useful_var_names[useful_var_names != "classe"]
+test <- test[, test_names]
+```
+
+Implement the prediction.
+```{r, cache=TRUE}
+my_predict <- predict(fit, test)
+my_predict
+```
+This is just the right prediction because I got a full mark after submitted.
